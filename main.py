@@ -7,7 +7,6 @@ from livekit.plugins import aws, deepgram, silero, langchain
 from livekit import agents, api
 from livekit.protocol import sip as sip_protocol
 from livekit.agents import AgentSession, Agent, RunContext, get_job_context
-from livekit.agents.llm import function_tool
 
 from dotenv import load_dotenv
 from pydantic_settings import BaseSettings
@@ -60,7 +59,7 @@ class ChatModel(ChatGoogleGenerativeAI):
         super().__init__(
             model=model,
             temperature=temperature,
-            api_key=api_key
+            api_key=api_key,
         )
 
 # CRM Integration Placeholder( Implement based on specific CRM APIs)
@@ -113,25 +112,11 @@ def create_graph():
     builder.add_edge("agent", END)
     return builder.compile()
 
-# --- 2. Agent Implementation ---
-
-async def hangup_call(ctx: agents.JobContext):
-    if ctx is None:
-        # Not running in a job context
-        return
-    
-    logger.info("\nHanging up the call...\n")
-    
-    await ctx.api.room.delete_room(
-        api.DeleteRoomRequest(
-            room=ctx.room.name,
-        )
-    )
 
 class QualificationAgent(Agent):
     """AI SDR that qualifies B2B leads using LangGraph"""
     
-    def __init__(self, graph_runnable, ctx: agents.JobContext):
+    def __init__(self, graph_runnable):
 
         langchain_llm = langchain.LLMAdapter(graph_runnable)
         self.ctx = ctx
@@ -159,20 +144,8 @@ class QualificationAgent(Agent):
 
                 **OBJECTION HANDLING:**
                 - If they say **"I'm busy"**: "I completely understand. I can be very brief—just 60 seconds to see if this is even relevant for you. Is that okay?"
-                - If they are **not interested**: "No problem at all. I'll take you off our list. Have a great day." (Then call the `end_call` tool).
-
-                **ENDING THE CALL:**
-                - **Qualified:** (Has budget, authority, need, timeline < 3 months): "It sounds like we could be a great fit. I'd love to set up a demo with our Account Executive. Does Tuesday at 10 AM work?"
-                - **Unqualified:** "It sounds like we might not be the best fit right now, but I appreciate your time. Have a great week!"
-                - **Tool Usage:** Once the conversation is naturally over (goodbye said), you MUST call the `end_call` function.
-                - DO NOT wait for the user to hang up. You must hang up using the tool.
-                """
+                """,
         )
-
-    @function_tool
-    async def end_call(self):
-        """Ends the call politely and hangs up."""
-        await hangup_call(self.ctx)
 
 async def entrypoint(ctx: agents.JobContext):
     """
@@ -206,12 +179,12 @@ async def entrypoint(ctx: agents.JobContext):
         vad=vad,
     )
 
-    agent = QualificationAgent(graph_runnable=graph, ctx=ctx)
+    agent = QualificationAgent(graph_runnable=graph)
 
     await session.start(room=ctx.room, agent=agent)
 
     greeting = """
-    'Hi! This is Solayappan from XYZ company. You recently inquired about our platform. Do you have 2 minutes to discuss your needs?
+    Say: 'Hi! This is Solayappan from XYZ company. You recently inquired about our platform. Do you have 2 minutes to discuss your needs?
     """
 
     await session.say(text=greeting)
